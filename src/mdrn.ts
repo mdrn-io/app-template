@@ -74,7 +74,7 @@ async function call<T>(env: Env, product: Product, path: string, options: CallOp
   }
   const payload: any = response.status === 204 ? undefined : await response.json().catch(() => undefined);
   if (!response.ok) {
-    // The same reading as @mdrn/sdk: MDRN's error envelope, a bare {code, message}, or neither.
+    // The same reading as @mdrnio/sdk: MDRN's error envelope, a bare {code, message}, or neither.
     const error = payload?.error && typeof payload.error === 'object' ? payload.error : payload;
     throw new ProductError(
       response.status,
