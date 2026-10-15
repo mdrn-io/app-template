@@ -1,0 +1,10 @@
+// How MDRN builds and runs this backend. Every setting here is optional; these are the ones
+// this template relies on. See https://mdrn.io/docs/compatibility for how MDRN builds an app.
+{
+  // The Worker starts here. MDRN would find src/index.ts on its own; naming it keeps it explicit.
+  "entry": "src/index.ts",
+  // Runs after `npm ci` on every build. A failing test stops the release before it ships.
+  "testCommand": "npm test",
+  // MDRN calls this before it sends traffic to a new release.
+  "readinessPath": "/health"
+}
