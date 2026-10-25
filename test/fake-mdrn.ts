@@ -1,12 +1,12 @@
-// An in-memory stand-in for what MDRN gives a release: the MDRN_PRODUCTS binding with Database
-// records, Files and Mail behind it, plus Identity's /v1/auth/me. It follows the real contracts
+// An in-memory stand-in for what MDRN gives a release: the MDRN_PRODUCTS binding with SQLite
+// records, Objects and Mail behind it, plus Identity's /v1/auth/me. It follows the real contracts
 // closely enough for these tests: required Idempotency-Key on writes, If-Match versions,
 // cursors, one-time grants. It is not MDRN; the real thing is exercised by deploying.
 import app from '../src/index.ts';
 import type { Env } from '../src/env.ts';
 
 export const ORIGIN = 'https://notes.example.apps.mdrn.io';
-const TOKENS = { DATABASE: 'mdrn_product_database', STORAGE: 'mdrn_product_storage', MAIL: 'mdrn_product_mail' };
+const TOKENS = { SQLITE: 'mdrn_product_sqlite', OBJECTS: 'mdrn_product_objects', MAIL: 'mdrn_product_mail' };
 
 interface StoredRecord {
   id: string;
@@ -38,7 +38,7 @@ export function fakeMdrn(settings: Partial<Env> = {}) {
     return records;
   };
 
-  async function database(request: Request, path: string[]) {
+  async function sqlite(request: Request, path: string[]) {
     const [, name, , id] = path; // collections/<name>/records[/<id>]
     const records = collection(name);
     const ifMatch = request.headers.get('If-Match');
@@ -74,7 +74,7 @@ export function fakeMdrn(settings: Partial<Env> = {}) {
     return json(record);
   }
 
-  async function storage(request: Request, path: string[]) {
+  async function objectsApi(request: Request, path: string[]) {
     const body: any = request.method === 'POST' ? await request.json() : undefined;
     if (path[0] === 'uploads' && path.length === 1) {
       const id = next('upl');
@@ -95,12 +95,13 @@ export function fakeMdrn(settings: Partial<Env> = {}) {
       objects.set(upload.objectId, { state: 'ready' });
       return json({ id: upload.objectId, state: 'verifying' }, 202);
     }
-    if (path[0] === 'objects' && path[2] === 'download-grants') {
-      if (objects.get(path[1])?.state !== 'ready') return error(404, 'NOT_FOUND');
+    // /v1/objects/{id}: uploads and operations are matched first, so any other segment is an object id.
+    if (path[0] !== 'uploads' && path[1] === 'download-grants') {
+      if (objects.get(path[0])?.state !== 'ready') return error(404, 'NOT_FOUND');
       return json({ id: next('grant'), url: `https://files.example/transfer/${next('dl')}`, method: 'GET', headers: {}, expiresAt: '2030-01-01T00:00:00Z', maxBytes: 1 });
     }
-    if (path[0] === 'objects' && request.method === 'DELETE') {
-      objects.delete(path[1]);
+    if (path[0] !== 'uploads' && path.length === 1 && request.method === 'DELETE') {
+      objects.delete(path[0]);
       return new Response(null, { status: 204 });
     }
     return error(404, 'NOT_FOUND');
@@ -117,7 +118,7 @@ export function fakeMdrn(settings: Partial<Env> = {}) {
         const account = accounts.get(token);
         return account ? json({ id: account.id, email: account.email ?? null }) : error(401, 'invalid_session');
       }
-      const product = url.pathname.startsWith('/_mdrn/v1/database/') ? 'DATABASE' : url.pathname.startsWith('/v1/storage/') ? 'STORAGE' : url.pathname === '/v1/mail/messages' ? 'MAIL' : null;
+      const product = url.pathname.startsWith('/_mdrn/v1/sqlite/') ? 'SQLITE' : url.pathname === '/v1/objects' || url.pathname.startsWith('/v1/objects/') ? 'OBJECTS' : url.pathname === '/v1/mail/messages' ? 'MAIL' : null;
       if (!product) return error(404, 'NOT_FOUND');
       if (request.headers.get('Authorization') !== `Bearer ${TOKENS[product]}`) return error(401, 'PRODUCT_ACCESS_DENIED');
       const key = request.headers.get('Idempotency-Key');
@@ -126,10 +127,10 @@ export function fakeMdrn(settings: Partial<Env> = {}) {
         const replay = replies.get(`${product}:${key}`);
         if (replay) return replay.clone();
       }
-      const path = url.pathname.split('/').filter(Boolean).slice(product === 'DATABASE' ? 3 : 2);
+      const path = url.pathname.split('/').filter(Boolean).slice(product === 'SQLITE' ? 3 : 2);
       let response: Response;
-      if (product === 'DATABASE') response = await database(request, path);
-      else if (product === 'STORAGE') response = await storage(request, path);
+      if (product === 'SQLITE') response = await sqlite(request, path);
+      else if (product === 'OBJECTS') response = await objectsApi(request, path);
       else {
         const message: any = await request.json();
         sent.push({ recipient: message.recipient, subject: message.subject, text: message.text });
@@ -144,10 +145,10 @@ export function fakeMdrn(settings: Partial<Env> = {}) {
     MDRN_PRODUCTS: binding,
     MDRN_PROJECT_ID: 'prj_test',
     MDRN_ENVIRONMENT: 'sandbox',
-    MDRN_DATABASE_URL: `${ORIGIN}/_mdrn/v1/database`,
-    MDRN_DATABASE_TOKEN: TOKENS.DATABASE,
-    MDRN_STORAGE_URL: `${ORIGIN}/v1/storage`,
-    MDRN_STORAGE_TOKEN: TOKENS.STORAGE,
+    MDRN_SQLITE_URL: `${ORIGIN}/_mdrn/v1/sqlite`,
+    MDRN_SQLITE_TOKEN: TOKENS.SQLITE,
+    MDRN_OBJECTS_URL: `${ORIGIN}/v1/objects`,
+    MDRN_OBJECTS_TOKEN: TOKENS.OBJECTS,
     MDRN_MAIL_URL: `${ORIGIN}/v1/mail`,
     MDRN_MAIL_TOKEN: TOKENS.MAIL,
     ...settings,
@@ -163,7 +164,7 @@ export function fakeMdrn(settings: Partial<Env> = {}) {
       accounts.set(token, { id, email });
       return token;
     },
-    /** The client's PUT of the bytes to an upload grant URL; answers the etag Files returns. */
+    /** The client's PUT of the bytes to an upload grant URL; answers the etag the transfer gateway returns. */
     upload(grantUrl: string, bytes: number) {
       const grant = grants.get(grantUrl.split('/').at(-1)!);
       if (!grant || grant.bytes !== bytes) throw new Error('grant refused the bytes');

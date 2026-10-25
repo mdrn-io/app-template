@@ -9,9 +9,9 @@ It is a TypeScript [Hono](https://hono.dev) app that runs as a Worker, and it sh
 
 - **Who is calling**: the signed-in user from MDRN's sign-in, with a CSRF check on writes.
 - **Notes**: create, list, read, update and delete records that belong to the signed-in user,
-  stored in MDRN Database. Ownership is checked in code on every route.
-- **Files**: upload and download through MDRN Files grant links, with size and type caps. The
-  bytes go straight between the client and Files, never through the Worker.
+  stored in MDRN SQLite. Ownership is checked in code on every route.
+- **Files**: upload and download through MDRN Objects grant links, with size and type caps. The
+  bytes go straight between the client and MDRN Objects, never through the Worker.
 - **Mail**: send a message to the signed-in user's own address, and only to it, with a daily cap.
 - **Mobile sign-in** (optional): MDRN's hosted login in the system browser, then this backend's
   own short-lived access tokens and rotating refresh tokens, with PKCE, reuse detection,
@@ -24,7 +24,7 @@ MIT licensed: copy it, change it, ship it.
 mdrn.jsonc            how MDRN builds it: entry, tests, readiness path
 src/index.ts          the routes, and the middleware in front of them
 src/auth.ts           the signed-in user: MDRN's headers, or a mobile bearer token
-src/mdrn.ts           a small client for Database, Files and Mail
+src/mdrn.ts           a small client for SQLite, Objects and Mail
 src/routes/notes.ts   per-user records with ownership checks
 src/routes/files.ts   grant-link uploads and downloads
 src/routes/mail.ts    mail to the user's own address
@@ -37,8 +37,9 @@ test/                 node --test suites, against an in-memory stand-in for MDRN
 1. Put this repository on GitHub and connect it to a service in the MDRN console (or upload the
    source). MDRN runs `npm ci`, then `npm test` (from `mdrn.jsonc`), bundles `src/index.ts` and
    waits for `/health` before the release takes traffic.
-2. In the environment, turn on the products the routes use: **Database** (notes, files, mobile
-   sessions), **Files** and **Mail**. MDRN then injects their `MDRN_*` bindings into every release.
+2. Keep the products the routes use on for the project: **SQLite** (notes, files, mobile
+   sessions), **Objects** (files) and **Mail**. A new project has every product on. MDRN injects their
+   `MDRN_*` bindings into every release, among them `MDRN_SQLITE_URL` and `MDRN_SQLITE_TOKEN`.
    A route whose product is off answers 503 in plain words; the rest keep working.
 3. Turn on **sign-in** for the service's origin, in the console or with
    `mdrn identity enable --origin https://<your app>`. MDRN then serves the hosted `/login` page
@@ -239,10 +240,10 @@ URLs. Calls time out after 10 seconds and are never retried for you.
 
 Every call to this backend runs your Worker, so each one counts as **Requests** and **CPU time**
 on your MDRN bill, whether it comes from a browser or an app. What a route then does is counted on
-that product's own meters: Database reads and writes, Files reads and writes, Emails. The hosted
-sign-in pages are MDRN's, and file bytes travel between the client and Files without passing
+that product's own meters: SQLite reads and writes, Object reads and writes, Emails. The hosted
+sign-in pages are MDRN's, and file bytes travel between the client and Objects without passing
 through the Worker. The in-memory rate limiter costs nothing; the daily mail cap reads and writes
-one Database record per message. See https://mdrn.io/docs/billing for prices.
+one SQLite record per message. See https://mdrn.io/docs/billing for prices.
 
 ## Develop
 

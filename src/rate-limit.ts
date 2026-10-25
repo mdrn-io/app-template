@@ -1,7 +1,7 @@
 // A cheap, best-effort rate limiter: a fixed window counted in this Worker instance's memory.
 // It costs nothing per request, but each instance (and each location) counts on its own and
 // forgets on restart, so it slows a noisy client down rather than enforcing an exact quota.
-// Where a limit must hold exactly, count in Database instead, as src/routes/mail.ts does.
+// Where a limit must hold exactly, count in SQLite instead, as src/routes/mail.ts does.
 import type { Context } from 'hono';
 import { createMiddleware } from 'hono/factory';
 import type { AppEnv } from './env.ts';

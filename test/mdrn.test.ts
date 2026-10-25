@@ -1,13 +1,13 @@
 // The product client itself: what a failed, redirected or misconfigured call looks like.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { db, ProductError } from '../src/mdrn.ts';
+import { sqlite, ProductError } from '../src/mdrn.ts';
 import type { Env } from '../src/env.ts';
 
-const envAnswering = (response: () => Response, url = 'https://notes.example.apps.mdrn.io/_mdrn/v1/database'): Env => ({
+const envAnswering = (response: () => Response, url = 'https://notes.example.apps.mdrn.io/_mdrn/v1/sqlite'): Env => ({
   MDRN_PRODUCTS: { fetch: async () => response() },
-  MDRN_DATABASE_URL: url,
-  MDRN_DATABASE_TOKEN: 'mdrn_product_database',
+  MDRN_SQLITE_URL: url,
+  MDRN_SQLITE_TOKEN: 'mdrn_product_sqlite',
 });
 
 test('a failed call carries MDRN\'s code, or HTTP_ERROR when the body is not an MDRN error', async () => {
@@ -18,7 +18,7 @@ test('a failed call carries MDRN\'s code, or HTTP_ERROR when the body is not an 
     ['Bad gateway', 'HTTP_ERROR', 'MDRN request failed with HTTP 409'],
   ]) {
     const env = envAnswering(() => new Response(body, { status: 409 }));
-    await assert.rejects(db.list(env, 'notes'), (error: unknown) => error instanceof ProductError && error.status === 409 && error.code === code && error.message === message);
+    await assert.rejects(sqlite.list(env, 'notes'), (error: unknown) => error instanceof ProductError && error.status === 409 && error.code === code && error.message === message);
   }
 });
 
@@ -28,7 +28,7 @@ test('a redirect is refused, not followed', async () => {
     calls++;
     return new Response(null, { status: 302, headers: { Location: 'https://elsewhere.example/' } });
   });
-  await assert.rejects(db.list(env, 'notes'), (error: unknown) => error instanceof ProductError && error.status === 302 && error.code === 'UNEXPECTED_REDIRECT');
+  await assert.rejects(sqlite.list(env, 'notes'), (error: unknown) => error instanceof ProductError && error.status === 302 && error.code === 'UNEXPECTED_REDIRECT');
   assert.equal(calls, 1);
 });
 
@@ -38,8 +38,8 @@ test('the product token only goes to an https URL', async () => {
     calls++;
     return Response.json({ items: [], nextCursor: null });
   };
-  await assert.rejects(db.list(envAnswering(answer, 'http://notes.example.apps.mdrn.io/_mdrn/v1/database'), 'notes'), /must be an https URL/);
+  await assert.rejects(sqlite.list(envAnswering(answer, 'http://notes.example.apps.mdrn.io/_mdrn/v1/sqlite'), 'notes'), /must be an https URL/);
   assert.equal(calls, 0);
-  await db.list(envAnswering(answer, 'http://localhost:8787/_mdrn/v1/database'), 'notes');
+  await sqlite.list(envAnswering(answer, 'http://localhost:8787/_mdrn/v1/sqlite'), 'notes');
   assert.equal(calls, 1);
 });

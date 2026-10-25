@@ -42,7 +42,7 @@ test('upload through a grant, complete, then download through a grant', async ()
   assert.equal((await call(fake, 'DELETE', `/api/files/${started.body.file.id}?version=2`, undefined, alice)).status, 204);
 });
 
-test('size and type caps are enforced before Files is asked', async () => {
+test('size and type caps are enforced before Objects is asked', async () => {
   const { fake, alice } = setup();
   const refused = [
     { ...photo, bytes: MAX_FILE_BYTES + 1 },

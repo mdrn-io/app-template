@@ -28,7 +28,7 @@ app.notFound(c => fail(c, 404, 'not_found', 'Not found.'));
 // product, so it stays cheap and does not fail when a product is briefly unavailable.
 app.get('/health', c => c.json({ ok: true }));
 
-// Small bodies only: file bytes go straight to MDRN Files, never through here.
+// Small bodies only: file bytes go straight to MDRN Objects, never through here.
 const limitBody = bodyLimit({ maxSize: 64 * 1024, onError: c => fail(c, 413, 'too_large', 'The request body is too large.') });
 app.use('/api/*', limitBody);
 app.use('/mobile/*', limitBody);

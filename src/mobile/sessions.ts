@@ -1,4 +1,4 @@
-// Mobile sessions and one-time sign-in codes, kept in Database. Only hashes of the secrets are
+// Mobile sessions and one-time sign-in codes, kept in SQLite. Only hashes of the secrets are
 // stored: someone who can read the database still cannot use what is in it.
 //
 // A refresh token is "rt1.<user key>.<session id>.<secret>". The session id finds the record in
@@ -7,7 +7,7 @@
 // means two parties hold the session, so the whole session is revoked.
 import { randomToken, safeEqual, sha256, userKey } from '../crypto.ts';
 import type { Env } from '../env.ts';
-import { db, ProductError, type StoredRecord } from '../mdrn.ts';
+import { sqlite, ProductError, type StoredRecord } from '../mdrn.ts';
 import { CODE_SECONDS, REFRESH_TOKEN_SECONDS, now } from './tokens.ts';
 
 export interface MobileSession {
@@ -45,7 +45,7 @@ const sessions = (key: string) => `mobile_sessions_${key}`;
 /** A code for the app to exchange, valid for CODE_SECONDS and only once. */
 export async function createCode(env: Env, input: Omit<SignInCode, 'secretHash' | 'expiresAt'>): Promise<string> {
   const secret = randomToken();
-  const record = await db.create<SignInCode>(env, CODES, { ...input, secretHash: await sha256(secret), expiresAt: now() + CODE_SECONDS });
+  const record = await sqlite.create<SignInCode>(env, CODES, { ...input, secretHash: await sha256(secret), expiresAt: now() + CODE_SECONDS });
   return `${record.id}.${secret}`;
 }
 
@@ -54,10 +54,10 @@ export async function createCode(env: Env, input: Omit<SignInCode, 'secretHash' 
 export async function takeCode(env: Env, code: string): Promise<SignInCode | null> {
   const [id, secret, extra] = code.split('.');
   if (extra !== undefined || !ID.test(id ?? '') || !SECRET.test(secret ?? '')) return null;
-  const record = await db.get<SignInCode>(env, CODES, id);
+  const record = await sqlite.get<SignInCode>(env, CODES, id);
   if (!record || !safeEqual(await sha256(secret), record.data.secretHash)) return null;
   try {
-    await db.remove(env, CODES, record.id, record.version);
+    await sqlite.remove(env, CODES, record.id, record.version);
   } catch (error) {
     // Someone else took it first.
     if (error instanceof ProductError && (error.status === 404 || error.status === 409)) return null;
@@ -73,7 +73,7 @@ export async function createSession(env: Env, userId: string, email: string | nu
   const secret = randomToken();
   const key = await userKey(userId);
   const at = now();
-  const record = await db.create<MobileSession>(env, sessions(key), {
+  const record = await sqlite.create<MobileSession>(env, sessions(key), {
     userId,
     email,
     secretHash: await sha256(secret),
@@ -89,7 +89,7 @@ export async function createSession(env: Env, userId: string, email: string | nu
 /** The session record, if `userId` owns it. */
 export async function sessionRecord(env: Env, userId: string, sessionId: string): Promise<StoredRecord<MobileSession> | null> {
   if (!ID.test(sessionId)) return null;
-  const record = await db.get<MobileSession>(env, sessions(await userKey(userId)), sessionId);
+  const record = await sqlite.get<MobileSession>(env, sessions(await userKey(userId)), sessionId);
   return record && record.data.userId === userId ? record : null;
 }
 
@@ -98,7 +98,7 @@ export async function sessionRecord(env: Env, userId: string, sessionId: string)
 async function lookup(env: Env, token: string) {
   const [prefix, key, id, secret, extra] = token.split('.');
   if (prefix !== 'rt1' || extra !== undefined || !KEY.test(key ?? '') || !ID.test(id ?? '') || !SECRET.test(secret ?? '')) return null;
-  const record = await db.get<MobileSession>(env, sessions(key), id);
+  const record = await sqlite.get<MobileSession>(env, sessions(key), id);
   if (!record || (await userKey(record.data.userId)) !== key) return null;
   const hash = await sha256(secret);
   const match = safeEqual(hash, record.data.secretHash) ? 'current' : record.data.previousHashes.some(old => safeEqual(hash, old)) ? 'previous' : 'none';
@@ -126,7 +126,7 @@ export async function rotate(env: Env, token: string): Promise<Rotation> {
   if (record.data.revokedAt || record.data.expiresAt <= now()) return { ok: false, reason: 'invalid' };
   const secret = randomToken();
   try {
-    await db.update<MobileSession>(
+    await sqlite.update<MobileSession>(
       env,
       sessions(await userKey(record.data.userId)),
       record.id,
@@ -150,7 +150,7 @@ export async function revoke(env: Env, userId: string, sessionId: string, reason
     const record = await sessionRecord(env, userId, sessionId);
     if (!record || record.data.revokedAt) return;
     try {
-      await db.update<MobileSession>(env, sessions(await userKey(userId)), sessionId, { revokedAt: now(), revokedReason: reason }, record.version);
+      await sqlite.update<MobileSession>(env, sessions(await userKey(userId)), sessionId, { revokedAt: now(), revokedReason: reason }, record.version);
       return;
     } catch (error) {
       if (!(error instanceof ProductError && error.status === 409)) throw error;
@@ -164,7 +164,7 @@ export async function revokeAll(env: Env, userId: string) {
   const collection = sessions(await userKey(userId));
   let cursor: string | undefined;
   do {
-    const page = await db.list<MobileSession>(env, collection, { limit: 200, cursor });
+    const page = await sqlite.list<MobileSession>(env, collection, { limit: 200, cursor });
     for (const record of page.items) {
       if (record.data.userId === userId && !record.data.revokedAt) await revoke(env, userId, record.id, 'logout');
     }

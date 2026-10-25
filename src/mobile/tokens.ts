@@ -2,8 +2,8 @@
 //
 // A native app cannot use MDRN's sign-in cookie, so this backend gives it its own credentials:
 // - an access token: short-lived (10 minutes), self-contained and signed with
-//   MOBILE_TOKEN_SECRET, so checking one costs no Database call;
-// - a refresh token: long-lived, stored only as a hash in Database, replaced on every use
+//   MOBILE_TOKEN_SECRET, so checking one costs no SQLite call;
+// - a refresh token: long-lived, stored only as a hash in SQLite, replaced on every use
 //   (rotation), and revoked with its whole session if an old one is ever presented again.
 import { base64url, fromBase64url, hmacSign, hmacVerify } from '../crypto.ts';
 import type { Env } from '../env.ts';

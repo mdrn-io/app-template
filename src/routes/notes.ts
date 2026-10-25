@@ -1,6 +1,6 @@
 // Notes: create, list, read, update and delete notes that belong to the signed-in user.
 //
-// Where they live: each user's notes are a Database collection of their own, named from their
+// Where they live: each user's notes are a SQLite collection of their own, named from their
 // user id (notes_u…). Listing a user's notes therefore reads only their records, however many
 // users there are. Every note also records its owner, and every route checks that owner in code
 // before it answers, so a note can only ever be read or changed by the user who made it.
@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { userKey } from '../crypto.ts';
 import type { AppEnv } from '../env.ts';
 import { fail } from '../errors.ts';
-import { db, type StoredRecord } from '../mdrn.ts';
+import { sqlite, type StoredRecord } from '../mdrn.ts';
 import { body, idParam, params, query, version } from '../validate.ts';
 
 interface Note {
@@ -38,13 +38,13 @@ export const notes = new Hono<AppEnv>();
 /** Reads a note and checks that the signed-in user owns it; null otherwise. A note someone else
  * owns answers exactly like one that does not exist, so ids reveal nothing. */
 async function ownNote(env: AppEnv['Bindings'], userId: string, id: string) {
-  const record = await db.get<Note>(env, await collection(userId), id);
+  const record = await sqlite.get<Note>(env, await collection(userId), id);
   return record && record.data.ownerId === userId ? record : null;
 }
 
 notes.get('/', query(z.strictObject({ cursor: z.string().max(2048).optional() })), async c => {
   const user = c.get('user');
-  const page = await db.list<Note>(c.env, await collection(user.id), { limit: 50, cursor: c.req.valid('query').cursor });
+  const page = await sqlite.list<Note>(c.env, await collection(user.id), { limit: 50, cursor: c.req.valid('query').cursor });
   return c.json({
     items: page.items.filter(record => record.data.ownerId === user.id).map(view),
     nextCursor: page.nextCursor,
@@ -54,7 +54,7 @@ notes.get('/', query(z.strictObject({ cursor: z.string().max(2048).optional() })
 notes.post('/', body(z.strictObject({ title, body: text.default('') })), async c => {
   const user = c.get('user');
   const input = c.req.valid('json');
-  const record = await db.create<Note>(c.env, await collection(user.id), { ownerId: user.id, title: input.title, body: input.body });
+  const record = await sqlite.create<Note>(c.env, await collection(user.id), { ownerId: user.id, title: input.title, body: input.body });
   return c.json(view(record), 201);
 });
 
@@ -76,7 +76,7 @@ notes.patch(
     const { version: expected, ...changes } = c.req.valid('json');
     const record = await ownNote(c.env, user.id, id);
     if (!record) return fail(c, 404, 'not_found', 'Note not found.');
-    const updated = await db.update<Note>(c.env, await collection(user.id), id, changes, expected);
+    const updated = await sqlite.update<Note>(c.env, await collection(user.id), id, changes, expected);
     return c.json(view(updated));
   },
 );
@@ -86,6 +86,6 @@ notes.delete('/:id', params(idParam), query(z.strictObject({ version: z.coerce.n
   const { id } = c.req.valid('param');
   const record = await ownNote(c.env, user.id, id);
   if (!record) return fail(c, 404, 'not_found', 'Note not found.');
-  await db.remove(c.env, await collection(user.id), id, c.req.valid('query').version);
+  await sqlite.remove(c.env, await collection(user.id), id, c.req.valid('query').version);
   return c.body(null, 204);
 });

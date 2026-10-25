@@ -1,4 +1,4 @@
-// A small client for the MDRN products this template uses: Database records, Files (Storage)
+// A small client for the MDRN products this template uses: SQLite records, Objects
 // and Mail. Each call goes through the MDRN_PRODUCTS binding with the product's own token, which
 // MDRN injected into this release. The tokens never leave this Worker.
 //
@@ -19,15 +19,16 @@ export class ProductError extends Error {
   }
 }
 
-/** A product this release has no binding for: it is not turned on for the environment. */
+/** A product this release has no binding for: it is off for the project. */
 export class ProductUnavailable extends Error {
   constructor(product: string) {
-    super(`${product} is not enabled for this environment`);
+    super(`${product} is off for this project`);
     this.name = 'ProductUnavailable';
   }
 }
 
-type Product = 'DATABASE' | 'STORAGE' | 'MAIL';
+type Product = 'SQLITE' | 'OBJECTS' | 'MAIL';
+const productNames: Record<Product, string> = { SQLITE: 'SQLite', OBJECTS: 'Objects', MAIL: 'Mail' };
 
 interface CallOptions {
   method?: string;
@@ -52,7 +53,7 @@ function secureBase(product: Product, base: string) {
 async function call<T>(env: Env, product: Product, path: string, options: CallOptions = {}): Promise<T> {
   const base = env[`MDRN_${product}_URL`];
   const token = env[`MDRN_${product}_TOKEN`];
-  if (!env.MDRN_PRODUCTS || !base || !token) throw new ProductUnavailable(product.toLowerCase());
+  if (!env.MDRN_PRODUCTS || !base || !token) throw new ProductUnavailable(productNames[product]);
   secureBase(product, base);
   const headers = new Headers({ Accept: 'application/json', Authorization: `Bearer ${token}` });
   if (options.body !== undefined) headers.set('Content-Type', 'application/json');
@@ -89,7 +90,7 @@ async function call<T>(env: Env, product: Product, path: string, options: CallOp
 export const newKey = () => crypto.randomUUID();
 
 // ---------------------------------------------------------------------------------------------
-// Database records
+// SQLite records
 //
 // A record is a JSON object (up to 64 KiB) in a named collection, with an id MDRN assigns and a
 // version that grows by one on every change. Updates and deletes name the version they expect
@@ -112,14 +113,14 @@ export interface RecordPage<T> {
 const recordsPath = (collection: string, id?: string) =>
   `/collections/${encodeURIComponent(collection)}/records${id === undefined ? '' : `/${encodeURIComponent(id)}`}`;
 
-export const db = {
+export const sqlite = {
   create<T>(env: Env, collection: string, data: T, idempotencyKey = newKey()) {
-    return call<StoredRecord<T>>(env, 'DATABASE', recordsPath(collection), { method: 'POST', body: { data }, idempotencyKey });
+    return call<StoredRecord<T>>(env, 'SQLITE', recordsPath(collection), { method: 'POST', body: { data }, idempotencyKey });
   },
   /** The record, or null when there is none with that id. */
   async get<T>(env: Env, collection: string, id: string): Promise<StoredRecord<T> | null> {
     try {
-      return await call<StoredRecord<T>>(env, 'DATABASE', recordsPath(collection, id));
+      return await call<StoredRecord<T>>(env, 'SQLITE', recordsPath(collection, id));
     } catch (error) {
       if (error instanceof ProductError && error.status === 404) return null;
       throw error;
@@ -129,22 +130,22 @@ export const db = {
     const query = new URLSearchParams();
     if (options.limit) query.set('limit', String(options.limit));
     if (options.cursor) query.set('cursor', options.cursor);
-    return call<RecordPage<T>>(env, 'DATABASE', recordsPath(collection) + (query.size ? `?${query}` : ''));
+    return call<RecordPage<T>>(env, 'SQLITE', recordsPath(collection) + (query.size ? `?${query}` : ''));
   },
   /** Merges `data` into the record's fields. */
   update<T>(env: Env, collection: string, id: string, data: Partial<T>, version: number, idempotencyKey = newKey()) {
-    return call<StoredRecord<T>>(env, 'DATABASE', recordsPath(collection, id), { method: 'PATCH', body: { data }, idempotencyKey, ifMatch: version });
+    return call<StoredRecord<T>>(env, 'SQLITE', recordsPath(collection, id), { method: 'PATCH', body: { data }, idempotencyKey, ifMatch: version });
   },
   remove(env: Env, collection: string, id: string, version: number, idempotencyKey = newKey()) {
-    return call<{ deleted: true }>(env, 'DATABASE', recordsPath(collection, id), { method: 'DELETE', idempotencyKey, ifMatch: version });
+    return call<{ deleted: true }>(env, 'SQLITE', recordsPath(collection, id), { method: 'DELETE', idempotencyKey, ifMatch: version });
   },
 };
 
 // ---------------------------------------------------------------------------------------------
-// Files (Storage)
+// Objects
 //
-// Bytes never pass through this Worker. It asks Files for a grant, a short-lived signed URL, and
-// the client sends or fetches the bytes there directly. Files of up to 16 MiB are one part.
+// Bytes never pass through this Worker. It asks Objects for a grant, a short-lived signed URL, and
+// the client sends or fetches the bytes there directly. An object of up to 16 MiB is one part.
 
 export interface Grant {
   id: string;
@@ -163,21 +164,21 @@ export interface Upload {
   partBytes: number;
 }
 
-export const files = {
+export const objects = {
   createUpload(env: Env, input: { filename: string; contentType: string; bytes: number; sha256: string }, idempotencyKey = newKey()) {
-    return call<Upload>(env, 'STORAGE', '/uploads', { method: 'POST', body: input, idempotencyKey });
+    return call<Upload>(env, 'OBJECTS', '/uploads', { method: 'POST', body: input, idempotencyKey });
   },
   createPartGrant(env: Env, uploadId: string, part: { partNumber: number; bytes: number }, idempotencyKey = newKey()) {
-    return call<Grant>(env, 'STORAGE', `/uploads/${encodeURIComponent(uploadId)}/parts`, { method: 'POST', body: part, idempotencyKey });
+    return call<Grant>(env, 'OBJECTS', `/uploads/${encodeURIComponent(uploadId)}/parts`, { method: 'POST', body: part, idempotencyKey });
   },
   completeUpload(env: Env, uploadId: string, parts: { partNumber: number; etag: string }[], idempotencyKey = newKey()) {
-    return call<{ id: string; state: string }>(env, 'STORAGE', `/uploads/${encodeURIComponent(uploadId)}/complete`, { method: 'POST', body: { parts }, idempotencyKey });
+    return call<{ id: string; state: string }>(env, 'OBJECTS', `/uploads/${encodeURIComponent(uploadId)}/complete`, { method: 'POST', body: { parts }, idempotencyKey });
   },
   createDownloadGrant(env: Env, objectId: string, idempotencyKey = newKey()) {
-    return call<Grant>(env, 'STORAGE', `/objects/${encodeURIComponent(objectId)}/download-grants`, { method: 'POST', body: {}, idempotencyKey });
+    return call<Grant>(env, 'OBJECTS', `/${encodeURIComponent(objectId)}/download-grants`, { method: 'POST', body: {}, idempotencyKey });
   },
   deleteObject(env: Env, objectId: string, idempotencyKey = newKey()) {
-    return call<void>(env, 'STORAGE', `/objects/${encodeURIComponent(objectId)}`, { method: 'DELETE', idempotencyKey });
+    return call<void>(env, 'OBJECTS', `/${encodeURIComponent(objectId)}`, { method: 'DELETE', idempotencyKey });
   },
 };
 

@@ -3,14 +3,14 @@
 // The request has no recipient field, and one sent anyway is refused: the address always comes
 // from MDRN Identity, never from the client. A backend that mails any address a client names is
 // a spam relay with your domain's name on it. Sends are also capped per user per day, counted in
-// Database so the cap holds across every Worker instance.
+// SQLite so the cap holds across every Worker instance.
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { identityEmail } from '../auth.ts';
 import { userKey } from '../crypto.ts';
 import type { AppEnv, Env, SignedInUser } from '../env.ts';
 import { fail } from '../errors.ts';
-import { db, mail as mailer, ProductError } from '../mdrn.ts';
+import { sqlite, mail as mailer, ProductError } from '../mdrn.ts';
 import { sessionRecord } from '../mobile/sessions.ts';
 import { body } from '../validate.ts';
 
@@ -36,15 +36,15 @@ async function takeQuota(env: Env, userId: string, limit: number): Promise<boole
   const collection = `mail_quota_${await userKey(userId)}`;
   const today = new Date().toISOString().slice(0, 10);
   for (let attempt = 0; attempt < 3; attempt++) {
-    const [current] = (await db.list<Quota>(env, collection, { limit: 1 })).items;
+    const [current] = (await sqlite.list<Quota>(env, collection, { limit: 1 })).items;
     if (!current) {
-      await db.create<Quota>(env, collection, { day: today, count: 1 });
+      await sqlite.create<Quota>(env, collection, { day: today, count: 1 });
       return true;
     }
     const used = current.data.day === today ? current.data.count : 0;
     if (used >= limit) return false;
     try {
-      await db.update<Quota>(env, collection, current.id, { day: today, count: used + 1 }, current.version);
+      await sqlite.update<Quota>(env, collection, current.id, { day: today, count: used + 1 }, current.version);
       return true;
     } catch (error) {
       // Another send counted at the same moment: read the count again.

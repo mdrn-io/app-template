@@ -49,7 +49,7 @@ test('an identity token Identity does not accept gets nothing sent', async () =>
   assert.deepEqual(fake.sent, []);
 });
 
-test('each user has a daily cap, counted in Database', async () => {
+test('each user has a daily cap, counted in SQLite', async () => {
   const fake = fakeMdrn({ MAIL_DAILY_LIMIT: '2' });
   const alice = { web: { id: 'usr_alice', token: fake.signIn('usr_alice', 'alice@example.com') } };
   const bob = { web: { id: 'usr_bob', token: fake.signIn('usr_bob', 'bob@example.com') } };

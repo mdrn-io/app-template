@@ -1,7 +1,7 @@
 // What a release of this Worker receives from MDRN, and the few settings it reads.
 //
-// MDRN injects the MDRN_* bindings into every release of a service whose environment has the
-// products turned on (Database, Files, Mail). You never set them yourself, and they are never
+// MDRN injects the MDRN_* bindings into every release of a service whose project has the
+// products on (SQLite, Objects, Mail). You never set them yourself, and they are never
 // visible to a browser: they exist only inside this Worker.
 
 /** The service binding MDRN gives a release for every product call. A plain fetch() of the
@@ -15,10 +15,10 @@ export interface Env {
   MDRN_PRODUCTS?: ProductsBinding;
   MDRN_PROJECT_ID?: string;
   MDRN_ENVIRONMENT?: string;
-  MDRN_DATABASE_URL?: string;
-  MDRN_DATABASE_TOKEN?: string;
-  MDRN_STORAGE_URL?: string;
-  MDRN_STORAGE_TOKEN?: string;
+  MDRN_SQLITE_URL?: string;
+  MDRN_SQLITE_TOKEN?: string;
+  MDRN_OBJECTS_URL?: string;
+  MDRN_OBJECTS_TOKEN?: string;
   MDRN_MAIL_URL?: string;
   MDRN_MAIL_TOKEN?: string;
 
