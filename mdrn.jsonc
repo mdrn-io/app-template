@@ -1,5 +1,5 @@
 // How MDRN builds and runs this backend. Every setting here is optional; these are the ones
-// this template relies on. See https://mdrn.io/docs/compatibility for how MDRN builds an app.
+// this template relies on. See https://mdrn.io/docs/deploy/frameworks/ for how MDRN builds an app.
 {
   // The Worker starts here. MDRN would find src/index.ts on its own; naming it keeps it explicit.
   "entry": "src/index.ts",
