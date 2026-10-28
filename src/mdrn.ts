@@ -165,8 +165,18 @@ export interface Upload {
 }
 
 export const objects = {
-  createUpload(env: Env, input: { filename: string; contentType: string; bytes: number; sha256: string }, idempotencyKey = newKey()) {
-    return call<Upload>(env, 'OBJECTS', '/uploads', { method: 'POST', body: input, idempotencyKey });
+  /** Creates the upload and waits until it is open for parts, as @mdrnio/sdk does: a part asked
+   * for before that is refused (409), so the grant is asked for only once it is `uploading`. */
+  async createUpload(env: Env, input: { filename: string; contentType: string; bytes: number; sha256: string }, idempotencyKey = newKey()) {
+    let upload = await call<Upload>(env, 'OBJECTS', '/uploads', { method: 'POST', body: input, idempotencyKey });
+    for (let attempt = 0; upload.state !== 'uploading'; attempt += 1) {
+      if (['aborted', 'expired', 'rejected', 'complete'].includes(upload.state) || attempt >= 20) {
+        throw new ProductError(409, 'UPLOAD_NOT_OPEN', `The upload is ${upload.state}, not open for parts`);
+      }
+      await new Promise(resolve => setTimeout(resolve, Math.min(1000, 100 * 2 ** attempt)));
+      upload = await call<Upload>(env, 'OBJECTS', `/uploads/${encodeURIComponent(upload.id)}`);
+    }
+    return upload;
   },
   createPartGrant(env: Env, uploadId: string, part: { partNumber: number; bytes: number }, idempotencyKey = newKey()) {
     return call<Grant>(env, 'OBJECTS', `/uploads/${encodeURIComponent(uploadId)}/parts`, { method: 'POST', body: part, idempotencyKey });

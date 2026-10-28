@@ -25,7 +25,7 @@ export function fakeMdrn(settings: Partial<Env> = {}) {
   const next = (prefix: string) => `${prefix}_${String(++sequence).padStart(6, '0')}`;
   const collections = new Map<string, Map<string, StoredRecord>>();
   const replies = new Map<string, Response>();
-  const uploads = new Map<string, { objectId: string; bytes: number; etag?: string; sha256: string }>();
+  const uploads = new Map<string, { objectId: string; bytes: number; etag?: string; sha256: string; open?: boolean }>();
   const objects = new Map<string, { state: string }>();
   const grants = new Map<string, { uploadId: string; bytes: number }>();
   /** Identity: identity token -> the user's account. */
@@ -80,10 +80,18 @@ export function fakeMdrn(settings: Partial<Env> = {}) {
       const id = next('upl');
       const objectId = next('obj');
       uploads.set(id, { objectId, bytes: body.bytes, sha256: body.sha256 });
-      return json({ id, objectId, state: 'uploading', expiresAt: '2030-01-01T00:00:00Z', partBytes: 16 * 1024 * 1024 }, 201);
+      // As Objects does, a new upload opens for parts a moment later: a part asked for before is 409.
+      return json({ id, objectId, state: 'pending', expiresAt: '2030-01-01T00:00:00Z', partBytes: 16 * 1024 * 1024 }, 201);
+    }
+    if (path[0] === 'uploads' && path.length === 2 && request.method === 'GET') {
+      const upload = uploads.get(path[1]);
+      if (!upload) return error(404, 'NOT_FOUND');
+      upload.open = true;
+      return json({ id: path[1], objectId: upload.objectId, state: 'uploading', expiresAt: '2030-01-01T00:00:00Z', partBytes: 16 * 1024 * 1024 });
     }
     if (path[0] === 'uploads' && path[2] === 'parts') {
       const upload = uploads.get(path[1]);
+      if (upload && !upload.open) return error(409, 'UPLOAD_NOT_READY');
       if (!upload || body.partNumber !== 1 || body.bytes !== upload.bytes) return error(400, 'INVALID_REQUEST');
       const id = next('grant');
       grants.set(id, { uploadId: path[1], bytes: body.bytes });

@@ -28,8 +28,9 @@ export function handleError(error: Error, c: Context) {
     if (error.status === 400 || error.status === 415) return fail(c, 400, 'invalid_request', 'The request body must be JSON.');
   }
   if (error instanceof ProductError) {
-    // A record changed since the client read it: the client should read it again.
-    if (error.status === 409) return fail(c, 409, 'conflict', 'This item changed since you read it. Load it again and retry.');
+    // A record changed since the client read it (MDRN's CONFLICT): the client should read it
+    // again. Any other 409 is not the client's edit and is answered as MDRN being unavailable.
+    if (error.status === 409 && error.code === 'CONFLICT') return fail(c, 409, 'conflict', 'This item changed since you read it. Load it again and retry.');
     if (error.status === 404) return fail(c, 404, 'not_found', 'Not found.');
     if (error.status === 429) return fail(c, 429, 'rate_limited', 'Too many requests. Try again shortly.');
     console.error(JSON.stringify({ event: 'product_error', status: error.status, code: error.code, message: error.message }));
