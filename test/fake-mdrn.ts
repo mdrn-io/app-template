@@ -31,6 +31,8 @@ export function fakeMdrn(settings: Partial<Env> = {}) {
   /** Identity: identity token -> the user's account. */
   const accounts = new Map<string, { id: string; email?: string }>();
   const sent: { recipient: string; subject: string; text: string }[] = [];
+  /** SQLite reads made: each GET of a record or a page. */
+  let reads = 0;
 
   const collection = (name: string) => {
     let records = collections.get(name);
@@ -42,6 +44,7 @@ export function fakeMdrn(settings: Partial<Env> = {}) {
     const [, name, , id] = path; // collections/<name>/records[/<id>]
     const records = collection(name);
     const ifMatch = request.headers.get('If-Match');
+    if (request.method === 'GET') reads += 1;
     if (request.method === 'GET' && id === undefined) {
       const url = new URL(request.url);
       const limit = Number(url.searchParams.get('limit') ?? 50);
@@ -166,6 +169,9 @@ export function fakeMdrn(settings: Partial<Env> = {}) {
     env,
     collections,
     sent,
+    get reads() {
+      return reads;
+    },
     /** Signs a user in to Identity; answers the identity token Proxy would pass on. */
     signIn(id: string, email?: string) {
       const token = `idt_${id}_${++sequence}`;

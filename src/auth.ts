@@ -8,7 +8,9 @@
 // Proxy first deletes every x-mdrn-* header the caller sent, so a client cannot forge them, and
 // this Worker is reachable only through Proxy. That is why the headers can be trusted here.
 // (Running locally with `wrangler dev` there is no Proxy: anyone can send them. Never expose a
-// local server.)
+// local server.) MDRN attaches the MDRN_PRODUCTS binding to every release it
+// deploys; without it the headers are ignored, so a copy run anywhere else has no web sign-in
+// rather than one anybody can forge.
 //
 // Mobile: a native app sends `Authorization: Bearer <access token>` from src/mobile.
 import type { Context } from 'hono';
@@ -20,8 +22,10 @@ import { mobileConfig, verifyAccessToken } from './mobile/tokens.ts';
 const USER_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-/** The signed-in browser user, from the headers Proxy added, or null. */
-export function webUser(c: Context): SignedInUser | null {
+/** The signed-in browser user, from the headers Proxy added, or null. Null too when this Worker
+ * is not running on MDRN (no MDRN_PRODUCTS binding), since nothing then strips forged headers. */
+export function webUser(c: Context<AppEnv>): SignedInUser | null {
+  if (!c.env?.MDRN_PRODUCTS) return null;
   const id = c.req.header('x-mdrn-user-id');
   const identityToken = c.req.header('x-mdrn-identity-token');
   if (!id || !USER_ID.test(id) || !identityToken) return null;

@@ -26,8 +26,9 @@ interface Quota {
 async function ownAddress(env: Env, requestUrl: string, user: SignedInUser): Promise<string | null> {
   if (user.via === 'web') return user.identityToken ? identityEmail(env, requestUrl, user.identityToken) : null;
   const session = user.sessionId ? await sessionRecord(env, user.id, user.sessionId) : null;
-  // A signed-out session stops here at once, even while its access token has minutes left.
-  if (!session || session.data.revokedAt) return null;
+  // A signed-out session is deleted, so it stops here at once, even while its access token has
+  // minutes left.
+  if (!session) return null;
   return session.data.email;
 }
 

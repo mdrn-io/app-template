@@ -74,8 +74,10 @@ page could post here with your user's cookie.
 The user's email address is not in the headers. When the mail route needs it, the backend asks
 MDRN's `/v1/auth/me` with the identity token, so the address always comes from MDRN.
 
-Locally (`wrangler dev`) there is no Proxy and anyone can send those headers: never expose a
-local server.
+The headers are trusted only when the Worker runs on MDRN, told by the `MDRN_PRODUCTS` binding
+MDRN attaches to every release it deploys. Without it (`wrangler dev`, or a copy deployed
+anywhere else) there is no Proxy, anyone can send those headers, and `src/auth.ts` ignores them:
+such a copy has no web sign-in rather than one anybody can forge. Never expose a local server.
 
 Each user's records live in collections named after them (`notes_u…`, `files_u…`), so listing
 one user's notes reads only theirs. Every record also stores its owner, and every route checks it.
@@ -129,7 +131,7 @@ Turn the mobile module on with two service variables (console: the service's Var
 
 | Variable | Value |
 | --- | --- |
-| `MOBILE_TOKEN_SECRET` | at least 32 random characters, marked secret |
+| `MOBILE_TOKEN_SECRET` | at least 32 random characters (`openssl rand -base64 32`), marked secret |
 | `MOBILE_REDIRECT_URIS` | the exact URIs the app may receive the code at, comma-separated |
 
 Prefer a universal link / App Link (`https://example.com/app/signed-in`) over a custom scheme:
@@ -156,9 +158,19 @@ The flow (OAuth 2.0 authorization code with PKCE):
 6. Sign out with `POST /mobile/logout` (bearer), or `{"everywhere": true}` for every device.
    `POST /mobile/revoke {"token": <refresh_token>}` ends a session without an access token.
 
+Codes and refresh tokens are signed with `MOBILE_TOKEN_SECRET`, and a signature that is not
+yours is refused before anything is read, so a flood of made-up ones costs no SQLite reads.
+Changing the secret signs every app out. Refresh tokens issued before they were signed (`rt1.`)
+still work, each costing one read, and come back signed on their next use; 30 days after you
+deploy this version none can be live, and `UNSIGNED` in `src/mobile/sessions.ts` can be set to
+`false`.
+
 Refresh tokens are stored only as hashes. After a logout the refresh token stops at once; an
 access token already issued keeps working until it expires (at most 10 minutes), except where a
-route reads the session itself, as the mail route does.
+route reads the session itself, as the mail route does. An ended session is deleted, not kept
+marked, and so is an expired one when its refresh token is next presented; a code nobody
+exchanged is deleted when the next code is made. These records hold your users' email
+addresses, and you are their controller.
 
 Swift:
 
@@ -242,8 +254,12 @@ Every call to this backend runs your Worker, so each one counts as **Requests** 
 on your MDRN bill, whether it comes from a browser or an app. What a route then does is counted on
 that product's own meters: SQLite reads and writes, Object reads and writes, Emails. The hosted
 sign-in pages are MDRN's, and file bytes travel between the client and Objects without passing
-through the Worker. The in-memory rate limiter costs nothing; the daily mail cap reads and writes
-one SQLite record per message. See https://mdrn.io/docs/billing for prices.
+through the Worker. The in-memory rate limiter costs nothing; it is advisory: it counts per
+isolate (each Worker instance, in each location, keeps its own counts and forgets them on restart),
+and a caller with no known address is not limited, so nothing that must hold rests on it. A
+signed mobile code or refresh token costs one SQLite read when presented; an unsigned or forged
+one costs none. The daily mail cap reads and writes one SQLite record per message, and a mobile sign-in
+also lists the pending codes once to delete expired ones. See https://mdrn.io/docs/billing for prices.
 
 ## Develop
 

@@ -175,6 +175,6 @@ mobile.post('/revoke', rateLimit('mobile-revoke', 30, 60_000, 'address'), body(z
 mobile.post('/logout', requireUser('mobile'), body(z.strictObject({ everywhere: z.boolean().default(false) })), async c => {
   const user = c.get('user');
   if (c.req.valid('json').everywhere) await revokeAll(c.env, user.id);
-  else await revoke(c.env, user.id, user.sessionId!, 'logout');
+  else await revoke(c.env, user.id, user.sessionId!);
   return c.body(null, 204);
 });

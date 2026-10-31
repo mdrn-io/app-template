@@ -94,7 +94,7 @@ test('the redirect carries only a one-time code and the state, never a token', a
   assert.equal(`${location.protocol}${location.pathname}`, REDIRECT);
   assert.deepEqual([...location.searchParams.keys()].sort(), ['code', 'state']);
   assert.equal(location.searchParams.get('state'), state);
-  assert.doesNotMatch(location.href, /at1\.|rt1\./);
+  assert.doesNotMatch(location.href, /at1\.|rt[12]\./);
 });
 
 test('the code exchange gives an access token that signs the user in, and a refresh token', async () => {
@@ -102,7 +102,7 @@ test('the code exchange gives an access token that signs the user in, and a refr
   const tokens = await signIn(fake, 'usr_alice');
   assert.equal(tokens.token_type, 'Bearer');
   assert.equal(tokens.expires_in, 600);
-  assert.match(tokens.refresh_token, /^rt1\./);
+  assert.match(tokens.refresh_token, /^rt2\./);
   const me = await call(fake, 'GET', '/api/me', undefined, { bearer: tokens.access_token });
   assert.deepEqual(me.body, { id: 'usr_alice', via: 'mobile' });
   // The same user's notes, whichever way they signed in.
@@ -132,8 +132,9 @@ test('a code works once, only with its verifier and redirect URI, and a failed t
   const elsewhere = (await authorize(fake, 'usr_alice', third.flow)).code;
   assert.equal((await exchange(elsewhere, third.verifier, 'https://example.com/app/signed-in')).status, 400);
 
-  const [id] = code.split('.');
-  assert.equal((await exchange(`${id}.${'A'.repeat(43)}`, first.verifier)).status, 400, 'a forged secret');
+  const [id, , signature] = code.split('.');
+  assert.equal((await exchange(`${id}.${'A'.repeat(43)}`, first.verifier)).status, 400, 'an unsigned code');
+  assert.equal((await exchange(`${id}.${'A'.repeat(43)}.${signature}`, first.verifier)).status, 400, 'a forged secret');
 });
 
 test('an expired code is refused', async () => {
@@ -146,10 +147,31 @@ test('an expired code is refused', async () => {
   assert.equal(response.status, 400);
 });
 
+test('an expired code is deleted when the next code is made; one still in flight is kept', async () => {
+  const fake = fakeMdrn(settings);
+  const { code: stale } = await authorize(fake, 'usr_alice', pkce().flow);
+  const { code: live } = await authorize(fake, 'usr_bob', pkce().flow);
+  const codes = fake.collections.get('mobile_codes')!;
+  codes.get(stale.split('.')[0])!.data.expiresAt = Math.floor(Date.now() / 1000) - 1;
+  await authorize(fake, 'usr_carol', pkce().flow);
+  assert.ok(!codes.has(stale.split('.')[0]));
+  assert.ok(codes.has(live.split('.')[0]));
+  assert.equal(codes.size, 2);
+});
+
+test('an expired session is refused and deleted', async () => {
+  const fake = fakeMdrn(settings);
+  const tokens = await signIn(fake);
+  const stored = fake.collections.get(`mobile_sessions_${await userKey('usr_alice')}`)!;
+  [...stored.values()][0].data.expiresAt = Math.floor(Date.now() / 1000) - 1;
+  assert.equal((await refresh(fake, tokens.refresh_token)).status, 400);
+  assert.equal(stored.size, 0);
+});
+
 test('refresh tokens are stored only as hashes', async () => {
   const fake = fakeMdrn(settings);
   const tokens = await signIn(fake, 'usr_alice');
-  const secret = tokens.refresh_token.split('.').at(-1)!;
+  const secret = tokens.refresh_token.split('.')[3];
   const stored = JSON.stringify([...fake.collections.get(`mobile_sessions_${await userKey('usr_alice')}`)!.values()]);
   assert.ok(!stored.includes(secret));
 });
@@ -174,18 +196,47 @@ test('reusing a rotated refresh token revokes the whole session', async () => {
   assert.equal(reused.status, 400);
   assert.equal(reused.body.error.code, 'invalid_grant');
   assert.equal((await refresh(fake, second.refresh_token)).status, 400, 'the legitimate holder must sign in again too');
-  const sessions = [...fake.collections.get(`mobile_sessions_${await userKey('usr_alice')}`)!.values()];
-  assert.equal(sessions[0].data.revokedReason, 'reuse');
+  assert.equal(fake.collections.get(`mobile_sessions_${await userKey('usr_alice')}`)!.size, 0, 'the ended session is deleted');
 });
 
 test('a malformed or forged refresh token is refused without ending the session', async () => {
   const fake = fakeMdrn(settings);
   const tokens = await signIn(fake);
-  const [prefix, key, id] = tokens.refresh_token.split('.');
-  for (const token of ['nope', `${prefix}.${key}.${id}.${'B'.repeat(43)}`, `${prefix}.u${'0'.repeat(32)}.${id}.${'B'.repeat(43)}`, `${tokens.refresh_token}.x`]) {
+  const [prefix, key, id, , signature] = tokens.refresh_token.split('.');
+  for (const token of ['nope', `${prefix}.${key}.${id}.${'B'.repeat(43)}`, `${prefix}.${key}.${id}.${'B'.repeat(43)}.${signature}`, `${prefix}.u${'0'.repeat(32)}.${id}.${'B'.repeat(43)}`, `${tokens.refresh_token}.x`]) {
     assert.equal((await refresh(fake, token)).status, 400, token);
   }
   assert.equal((await refresh(fake, tokens.refresh_token)).status, 200);
+});
+
+// #298: /mobile/token and /mobile/revoke take a code or token from anyone, limited only per
+// instance; one the module did not sign is refused before SQLite is read.
+test('an unsigned or forged code or refresh token costs no SQLite read', async () => {
+  const fake = fakeMdrn(settings);
+  const tokens = await signIn(fake);
+  const [, key, id, secret] = tokens.refresh_token.split('.');
+  const before = fake.reads;
+  const forged = [`rt2.${key}.${id}.${secret}`, `rt2.${key}.${id}.${secret}.${'C'.repeat(43)}`, `rt2.${key}.rec_999999.${'B'.repeat(43)}.${'C'.repeat(43)}`, `rt1.${key}.${id}.${secret}.${'C'.repeat(43)}`];
+  for (const token of forged) {
+    assert.equal((await refresh(fake, token)).status, 400, token);
+    assert.equal((await call(fake, 'POST', '/mobile/revoke', { token })).status, 200, token);
+  }
+  for (const code of [`rec_000001.${'A'.repeat(43)}`, `rec_000001.${'A'.repeat(43)}.${'C'.repeat(43)}`]) {
+    const response = await call(fake, 'POST', '/mobile/token', { grant_type: 'authorization_code', code, code_verifier: 'v'.repeat(43), redirect_uri: REDIRECT });
+    assert.equal(response.status, 400, code);
+  }
+  assert.equal(fake.reads, before, 'no read for any of them');
+  assert.equal((await refresh(fake, tokens.refresh_token)).status, 200, 'the session is untouched');
+});
+
+test('a refresh token from before signatures still works once, and comes back signed', async () => {
+  const fake = fakeMdrn(settings);
+  const tokens = await signIn(fake);
+  const [, key, id, secret] = tokens.refresh_token.split('.');
+  const legacy = await refresh(fake, `rt1.${key}.${id}.${secret}`);
+  assert.equal(legacy.status, 200);
+  assert.match(legacy.body.refresh_token, /^rt2\./);
+  assert.equal((await refresh(fake, legacy.body.refresh_token)).status, 200);
 });
 
 test('revoking a refresh token ends its session', async () => {
@@ -194,6 +245,7 @@ test('revoking a refresh token ends its session', async () => {
   const response = await call(fake, 'POST', '/mobile/revoke', { token: tokens.refresh_token });
   assert.equal(response.status, 200);
   assert.equal((await refresh(fake, tokens.refresh_token)).status, 400);
+  assert.equal(fake.collections.get(`mobile_sessions_${await userKey('usr_alice')}`)!.size, 0, 'the ended session is deleted');
   // Revoking something unknown says the same, revealing nothing.
   assert.equal((await call(fake, 'POST', '/mobile/revoke', { token: 'rt1.nothing' })).status, 200);
 });
@@ -210,6 +262,7 @@ test('logout ends this session; logout everywhere ends them all', async () => {
   const watch = await signIn(fake);
   assert.equal((await call(fake, 'POST', '/mobile/logout', { everywhere: true }, { bearer: laptop.access_token })).status, 204);
   assert.equal((await refresh(fake, watch.refresh_token)).status, 400);
+  assert.equal(fake.collections.get(`mobile_sessions_${await userKey('usr_alice')}`)!.size, 0, 'every ended session is deleted');
   assert.equal((await call(fake, 'POST', '/mobile/logout', undefined, { web: { id: 'usr_alice', token: fake.signIn('usr_alice') } })).status, 401, 'logout is for mobile tokens');
 });
 

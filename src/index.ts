@@ -10,6 +10,7 @@
 //   *      /mobile/...                  optional native-app sign-in (src/mobile/routes.ts)
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import { secureHeaders } from 'hono/secure-headers';
 import { requireUser } from './auth.ts';
 import type { AppEnv } from './env.ts';
 import { fail, handleError } from './errors.ts';
@@ -21,6 +22,12 @@ import { notes } from './routes/notes.ts';
 
 const app = new Hono<AppEnv>();
 
+// Hardening headers on every answer: nosniff, no framing by other sites, no referrer, and the
+// cross-origin policies that keep another site's page from reading or embedding these answers.
+// File bytes never pass through here, so the same-origin resource policy blocks no download.
+// HSTS covers this hostname only, never the subdomains of a custom domain. The two HTML pages of
+// src/mobile set their own Content-Security-Policy.
+app.use('*', secureHeaders({ strictTransportSecurity: 'max-age=15552000' }));
 app.onError(handleError);
 app.notFound(c => fail(c, 404, 'not_found', 'Not found.'));
 

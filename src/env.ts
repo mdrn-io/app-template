@@ -23,7 +23,8 @@ export interface Env {
   MDRN_MAIL_TOKEN?: string;
 
   // Your own variables (console: Service -> Variables). All optional.
-  /** Turns the mobile module on. At least 32 random characters; mark it secret. */
+  /** Turns the mobile module on. At least 32 random characters (`openssl rand -base64 32`); mark
+   * it secret. Only its length is checked, so make it random. */
   MOBILE_TOKEN_SECRET?: string;
   /** Where the mobile sign-in may hand a code back to: a comma-separated list of exact URIs,
    * for example "https://example.com/app/signed-in,com.example.app:/signed-in". */
